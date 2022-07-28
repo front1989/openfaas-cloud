@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-auth
+  namespace: {{ .Values.global.coreNamespace }}
+  labels:
+    app.kubernetes.io/name: openfaas-cloud
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/component: edge-auth
+spec:
+  replicas: {{ .Values.edgeAuth.replicas }}
+  selector:
+    matchLabels:
+      app: edge-auth
+  template:
+    metadata:
+      annotations:
+        prometheus.io.scrape: "false"
+      labels:
+        app: edge-auth
+    spec:
+      volumes:
+        - name: jwt-private-key
+          secret:
+            secretName: jwt-private-key
+        - name: jwt-public-key
+          secret:
+            secretName: jwt-public-key
+        - name: of-client-secret
+          secret:
+            secretName: of-client-secret
+        {{- if .Values.customers.customersSecret }}
+        - name: of-customers
+          secret:
+            secretName: of-customers
+        {{- end }}
+      containers:
+        - name: edge-auth
+          image: {{ .Values.edgeAuth.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          livenessProbe:
+            {{- if .Values.global.httpProbe }}
+            httpGet:
+              path: /healthz
+              port: 8080
+            {{- else }}
+            exec:
+              command:
+                - wget
+                - --quiet
+                - --tries=1
+                - --timeout=5
+                - --spider
+                - http://localhost:8080/healthz
+            {{- end }}
+            initialDelaySeconds: 2
+            periodSeconds: 10
+            timeoutSeconds: 5
+          env:
+            - name: port
+              value: "8080"
+            - name: oauth_client_secret_path
+              value: "/var/secrets/of-client-secret/of-client-secret"
+            - name: public_key_path
+              value: "/var/secrets/public/key.pub"
+            - name: private_key_path
+              value: "/var/secrets/private/key"
+            {{- if .Values.customers.customersSecret }}
+            - name: customers_path
+              value: "/var/secrets/of-customers/of-customers"
+            {{- end }}
+            - name: client_id
+              value: {{ required "A valid .Values.edgeAuth.clientId entry required!" .Values.edgeAuth.clientId | quote }}
+            - name: oauth_provider_base_url
+              value: {{ .Values.edgeAuth.oauthProviderBaseURL | quote }}
+            - name: oauth_provider
+              value: {{ .Values.edgeAuth.oauthProvider | quote }}
+            - name: external_redirect_domain
+              {{- if .Values.tls.enabled }}
+              value: {{ printf "https://auth.system.%s" .Values.global.rootDomain | quote }}
+              {{- else }}
+              value: {{ printf "http://auth.system.%s" .Values.global.rootDomain | quote }}
+              {{- end }}
+            - name: cookie_root_domain
+              value: {{ printf ".system.%s" .Values.global.rootDomain | quote }}
+            - name: secure_cookie
+              value: {{ .Values.tls.enabled | quote }}
+            {{- if not .Values.customers.customersSecret }}
+            - name: customers_url
+              value: {{ required "A valid .Values.customers.url entry required!" .Values.customers.url | quote }}
+            {{- end }}
+            - name: write_debug
+              value: {{ .Values.edgeAuth.writeDebug | quote }}
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          volumeMounts:
+            - name: jwt-private-key
+              readOnly: true
+              mountPath: "/var/secrets/private/"
+            - name: jwt-public-key
+              readOnly: true
+              mountPath: "/var/secrets/public"
+            - name: of-client-secret
+              readOnly: true
+              mountPath: "/var/secrets/of-client-secret"
+            {{- if .Values.customers.customersSecret }}
+            - name: of-customers
+              readOnly: true
+              mountPath: "/var/secrets/of-customers"
+            {{- end }}

@@ -3,11 +3,11 @@ package function
 import (
 	"context"
 	"fmt"
+	"github.com/alexellis/derek/config"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/alexellis/derek/auth"
@@ -18,13 +18,14 @@ import (
 )
 
 const (
-	defaultPrivateKeyName   = "private-key"
-	defaultSecretMountPath  = "/var/openfaas/secrets"
-	githubCheckCompleted    = "completed"
-	githubCheckQueued       = "queued"
-	githubConclusionFailure = "failure"
-	githubConclusionSuccess = "success"
-	githubConclusionNeutral = "neutral"
+	defaultPrivateKeyName    = "private-key"
+	defaultPayloadSecretName = "payload-secret"
+	defaultSecretMountPath   = "/var/openfaas/secrets"
+	githubCheckCompleted     = "completed"
+	githubCheckQueued        = "queued"
+	githubConclusionFailure  = "failure"
+	githubConclusionSuccess  = "success"
+	githubConclusionNeutral  = "neutral"
 )
 
 var (
@@ -69,8 +70,12 @@ func Handle(req []byte) string {
 		log.Printf("reusing provided auth token")
 	} else {
 		var tokenErr error
-		privateKeyPath := sdk.GetPrivateKeyPath()
-		token, tokenErr = auth.MakeAccessTokenForInstallation(os.Getenv("github_app_id"), status.EventInfo.InstallationID, privateKeyPath)
+		privateKey, err := sdk.ReadSecret(defaultPrivateKeyName)
+		if err != nil {
+			fmt.Sprintf("Error reading privateKey: %v", err)
+			return "Error reading github private Key"
+		}
+		token, tokenErr = auth.MakeAccessTokenForInstallation(os.Getenv("github_app_id"), status.EventInfo.InstallationID, privateKey)
 		if tokenErr != nil {
 			log.Fatalf("failed to report status %v, error: %s\n", status, tokenErr.Error())
 		}
@@ -119,66 +124,33 @@ func getLogs(status *sdk.CommitStatus, event *sdk.Event) (string, error) {
 	return string(responsePayload), nil
 }
 
-func buildPublicStatusURL(status string, statusContext string, event *sdk.Event) string {
-	url := event.URL
-
-	if status == sdk.StatusSuccess {
-		publicURL := os.Getenv("gateway_public_url")
-		gatewayPrettyURL := os.Getenv("gateway_pretty_url")
-		if statusContext != sdk.StackContext {
-			if len(gatewayPrettyURL) > 0 {
-				// https://user.get-faas.com/function
-				url = strings.Replace(gatewayPrettyURL, "user", event.Owner, 1)
-				url = strings.Replace(url, "function", event.Service, 1)
-			} else if len(publicURL) > 0 {
-				if strings.HasSuffix(publicURL, "/") == false {
-					publicURL = publicURL + "/"
-				}
-				// for success status if gateway's public url id set the deployed
-				// function url is used in the commit status
-				serviceValue := sdk.FormatServiceName(event.Owner, event.Service)
-				url = publicURL + "function/" + serviceValue
-			}
-		} else { // For context Stack on success the gateway url is used
-			if len(gatewayPrettyURL) > 0 {
-				// https://user.get-faas.com/function
-				url = strings.Replace(gatewayPrettyURL, "user", event.Owner, 1)
-				url = strings.Replace(url, "function", "", 1)
-			} else if len(publicURL) > 0 {
-				if strings.HasSuffix(publicURL, "/") == false {
-					publicURL = publicURL + "/"
-				}
-				url = publicURL
-			}
-		}
-	} else if status == sdk.StatusFailure {
-		publicURL := os.Getenv("gateway_public_url")
-		gatewayPrettyURL := os.Getenv("gateway_pretty_url")
-
-		if len(gatewayPrettyURL) > 0 {
-			url = strings.Replace(gatewayPrettyURL, "user", "system", 1)
-			url = strings.Replace(url, "function", "dashboard", 1)
-
-		} else if len(publicURL) > 0 {
-			if strings.HasSuffix(publicURL, "/") == false {
-				publicURL = publicURL + "/"
-			}
-			url = publicURL + "/function/system-dashboard"
-		}
-		url += "/" + event.Owner + "/" + event.Service + "/log?repoPath=" + event.Owner + "/" + event.Repository + "&commitSHA=" + event.SHA
-	}
-
-	return url
-}
-
 func reportToGithub(commitStatus *sdk.CommitStatus, event *sdk.Event) error {
-	if os.Getenv("use_checks") == "false" {
-		return reportStatus(commitStatus.Status, commitStatus.Description, commitStatus.Context, event)
+	secretKey, err := sdk.ReadSecret(defaultPayloadSecretName)
+	if err != nil {
+		log.Printf("reusing provided auth token")
+		log.Printf("Error reading secretKey: %v", err)
+		return err
 	}
-	return reportCheck(commitStatus, event)
+	privateKey, err := sdk.ReadSecret(defaultPrivateKeyName)
+	if err != nil {
+		log.Printf("Error reading privateKey: %v", err)
+		return err
+	}
+
+	appID := os.Getenv("github_app_id")
+	cfg := config.Config{
+		SecretKey:     secretKey,
+		PrivateKey:    privateKey,
+		ApplicationID: appID,
+	}
+	if os.Getenv("use_checks") == "false" {
+		return reportStatus(commitStatus.Status, commitStatus.Description, appID, event, cfg)
+	}
+	return reportCheck(commitStatus, event, cfg)
 }
 
-func reportStatus(status string, desc string, statusContext string, event *sdk.Event) error {
+func reportStatus(status string, desc string, statusContext string, event *sdk.Event, cfg config.Config) error {
+	appID := os.Getenv("github_app_id")
 
 	ctx := context.Background()
 
@@ -186,9 +158,9 @@ func reportStatus(status string, desc string, statusContext string, event *sdk.E
 
 	repoStatus := buildStatus(status, desc, statusContext, url)
 
-	log.Printf("Status: %s, Context: %s, GitHub AppID: %d, Repo: %s, Owner: %s", status, statusContext, event.InstallationID, event.Repository, event.Owner)
+	log.Printf("Status: %s, Context: %s, GitHub AppID: %s, Repo: %s, Owner: %s", status, statusContext, appID, event.Repository, event.Owner)
 
-	client := factory.MakeClient(ctx, token)
+	client := factory.MakeClient(ctx, token, cfg)
 
 	_, _, apiErr := client.Repositories.CreateStatus(ctx, event.Owner, event.Repository, event.SHA, repoStatus)
 	if apiErr != nil {
@@ -198,15 +170,15 @@ func reportStatus(status string, desc string, statusContext string, event *sdk.E
 	return nil
 }
 
-func reportCheck(commitStatus *sdk.CommitStatus, event *sdk.Event) error {
+func reportCheck(commitStatus *sdk.CommitStatus, event *sdk.Event, cfg config.Config) error {
 	ctx := context.Background()
-
+	appID := os.Getenv("github_app_id")
 	status := commitStatus.Status
 	url := buildPublicStatusURL(commitStatus.Status, commitStatus.Context, event)
 
-	log.Printf("Check: %s, Context: %s, GitHub AppID: %d, Repo: %s, Owner: %s", status, commitStatus.Context, event.InstallationID, event.Repository, event.Owner)
+	log.Printf("Check: %s, Context: %s, GitHub AppID: %s, Repo: %s, Owner: %s", status, commitStatus.Context, appID, event.Repository, event.Owner)
 
-	client := factory.MakeClient(ctx, token)
+	client := factory.MakeClient(ctx, token, cfg)
 
 	now := github.Timestamp{time.Now()}
 
@@ -222,7 +194,7 @@ func reportCheck(commitStatus *sdk.CommitStatus, event *sdk.Event) error {
 		logValue = formatLog(logs, maxCheckMessageLength)
 	}
 
-	checks, _, _ := client.Checks.ListCheckRunsForRef(ctx, event.Owner, event.Repository, event.SHA, &github.ListCheckRunsOptions{CheckName: &commitStatus.Context})
+	checks, _, _ := client.Checks.ListCheckRunsForRef(ctx, event.Owner, event.Repository, event.SHA, &github.ListCheckRunsOptions{CheckName: &appID})
 
 	checkRunStatus := getCheckRunStatus(&status)
 	conclusion := getCheckRunConclusion(&status)
@@ -267,7 +239,7 @@ func reportCheck(commitStatus *sdk.CommitStatus, event *sdk.Event) error {
 		log.Printf("Creating check run %s", check.Name)
 	}
 	if apiErr != nil {
-		return fmt.Errorf("Failed to report status %s, error: %s", status, apiErr.Error())
+		return fmt.Errorf("failed to report status %s, error: %s", status, apiErr.Error())
 	}
 	return nil
 }

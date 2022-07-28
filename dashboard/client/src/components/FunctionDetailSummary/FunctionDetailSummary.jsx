@@ -39,10 +39,13 @@ const FunctionDetailSummary = ({
   handleShowBadgeModal,
   handleShowRunOnMyOFModal
 }) => {
-  console.log('functionInvocation', functionInvocationData);
-  const to = `${fn.shortName}/log?repoPath=${fn.gitOwner}/${
+  const toBuildLogs = `${fn.shortName}/build-log?repoPath=${fn.gitOwner}/${
     fn.gitRepo
   }&commitSHA=${fn.gitSha}`;
+
+  const toFnLogs = `${fn.shortName}/function-log?repoPath=${fn.gitOwner}/${
+      fn.gitRepo
+  }`;
   const repo = `${fn.gitOwner}/${fn.gitRepo}`;
 
   const deployMeta = [
@@ -93,7 +96,7 @@ const FunctionDetailSummary = ({
       label: 'Repository:',
       renderValue() {
         return (
-          <a href={`https://github.com/${repo}`} target="_blank">
+          <a href={fn.gitRepoURL} target="_blank">
             {repo}
           </a>
         );
@@ -131,7 +134,7 @@ const FunctionDetailSummary = ({
     />
   );
   const deployButton = (
-    <Button outline color="secondary" size="xs" tag={Link} to={to}>
+    <Button outline color="secondary" size="xs" tag={Link} to={toBuildLogs}>
       <FontAwesomeIcon icon="folder-open" className="mr-2" />
       <span>Build Logs</span>
     </Button>
@@ -141,6 +144,13 @@ const FunctionDetailSummary = ({
       <FontAwesomeIcon icon={faAward} className="mr-2" />
       <span>Get Badge</span>
     </Button>
+  );
+
+  const fnLogsButton = (
+      <Button outline color="secondary" size="xs" tag={Link} to={toFnLogs}>
+        <FontAwesomeIcon icon="folder-open" className="mr-2" />
+        <span>Logs</span>
+      </Button>
   );
 
   return (
@@ -168,8 +178,9 @@ const FunctionDetailSummary = ({
       </div>
       <div className="col-lg-4">
         <FunctionOverviewPanel
-          headerText="Invocations"
+          headerText="Runtime"
           headerIcon={invocationsIcon}
+          button={fnLogsButton}
         >
           {functionInvocationData ? (
             <FunctionInvocation

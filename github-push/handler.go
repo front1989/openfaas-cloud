@@ -66,9 +66,9 @@ func Handle(req []byte) string {
 	eventInfo := sdk.BuildEventFromPushEvent(pushEvent)
 	status := sdk.BuildStatus(eventInfo, sdk.EmptyAuthToken)
 
-	if len(pushEvent.Ref) == 0 ||
-		pushEvent.Ref != "refs/heads/master" {
-		msg := "refusing to build non-master branch: " + pushEvent.Ref
+	if buildBranch := buildBranch(); len(pushEvent.Ref) == 0 ||
+		pushEvent.Ref != fmt.Sprintf("refs/heads/%s", buildBranch) {
+		msg := fmt.Sprintf("skipping build for: %s branch, the build branch is: %s", pushEvent.Ref, buildBranch)
 		auditEvent := sdk.AuditEvent{
 			Message: msg,
 			Owner:   pushEvent.Repository.Owner.Login,
@@ -78,7 +78,7 @@ func Handle(req []byte) string {
 
 		audit.Post(auditEvent)
 
-		status.AddStatus(sdk.StatusFailure, msg, sdk.StackContext)
+		status.AddStatus(sdk.StatusSuccess, msg, sdk.StackContext)
 		reportGitHubStatus(status)
 		return msg
 	}
@@ -104,7 +104,11 @@ func Handle(req []byte) string {
 
 	sdk.PostAudit(auditEvent)
 
-	return fmt.Sprintf("Push - %v, git-tar status: %d\n", pushEvent, statusCode)
+	return fmt.Sprintf("Push: %s\n, git-tar: %d\n", formatPushEvent(pushEvent), statusCode)
+}
+
+func formatPushEvent(pushEvent sdk.PushEvent) string {
+	return pushEvent.Repository.Owner.Login + "/" + pushEvent.Repository.Name + "@" + pushEvent.Ref + "#" + pushEvent.Ref + " [" + pushEvent.Repository.CloneURL + "]"
 }
 
 func postEvent(pushEvent sdk.PushEvent) (int, error) {
@@ -166,4 +170,12 @@ func reportGitHubStatus(status *sdk.Status) {
 	if reportErr != nil {
 		log.Printf("failed to report status, error: %s", reportErr.Error())
 	}
+}
+
+func buildBranch() string {
+	branch := os.Getenv("build_branch")
+	if branch == "" {
+		return "master"
+	}
+	return branch
 }

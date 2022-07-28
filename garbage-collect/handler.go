@@ -1,7 +1,7 @@
 package function
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -12,15 +12,30 @@ import (
 	"time"
 
 	"github.com/alexellis/hmac"
+	faasSDK "github.com/openfaas/faas-cli/proxy"
 	"github.com/openfaas/openfaas-cloud/sdk"
 )
 
-const Source = "garbage-collect"
+const (
+	Source    = "garbage-collect"
+	namespace = ""
+)
+
+var timeout = 3 * time.Second
+
+//FaaSAuth Authentication type for OpenFaaS
+type FaaSAuth struct {
+}
+
+//Set add basic authentication to the request
+func (auth *FaaSAuth) Set(req *http.Request) error {
+	return sdk.AddBasicAuth(req)
+}
 
 // Handle function cleans up functions which were removed or renamed
 // within the repo for the given user.
 func Handle(req []byte) string {
-	validateErr := validateRequest(req)
+	validateErr := validateRequestSigning(req)
 
 	if validateErr != nil {
 		log.Fatal(validateErr)
@@ -45,21 +60,26 @@ func Handle(req []byte) string {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("Functions owned by %s:\n %s", owner, deployedFunctions)
+	deployedList := ""
+	for _, fn := range deployedFunctions {
+		deployedList += fn.GetOwner() + "/" + fn.GetRepo() + ", "
+	}
 
+	log.Printf("Functions owned by %s:\n %s", owner, strings.Trim(deployedList, ", "))
+
+	client := faasSDK.NewClient(&FaaSAuth{}, gatewayURL, nil, &timeout)
 	deleted := 0
 	for _, fn := range deployedFunctions {
 		if garbageReq.Repo == "*" ||
 			(fn.GetRepo() == garbageReq.Repo && !included(&fn, owner, garbageReq.Functions)) {
-
-			err = deleteFunction(fn.Name, gatewayURL)
+			log.Printf("Delete: %s\n", fn.Name)
+			err = client.DeleteFunction(context.Background(), fn.Name, namespace)
 			if err != nil {
 				auditEvent := sdk.AuditEvent{
 					Message: fmt.Sprintf("Unable to delete function: `%s`", fn.Name),
 					Source:  Source,
 				}
 				sdk.PostAudit(auditEvent)
-
 				log.Println(err)
 			}
 			deleted = deleted + 1
@@ -75,7 +95,7 @@ func Handle(req []byte) string {
 	return fmt.Sprintf("Garbage collection ran for %s/%s - %d functions deleted.", garbageReq.Owner, garbageReq.Repo, deleted)
 }
 
-func validateRequest(req []byte) (err error) {
+func validateRequestSigning(req []byte) (err error) {
 	payloadSecret, err := sdk.ReadSecret("payload-secret")
 
 	if err != nil {
@@ -108,60 +128,18 @@ func included(fn *openFaaSFunction, owner string, functionStack []string) bool {
 	return false
 }
 
-func deleteFunction(target, gatewayURL string) error {
-	var err error
-	fmt.Println("Delete ", target)
-
-	c := http.Client{
-		Timeout: time.Second * 3,
-	}
-	delReq := struct {
-		FunctionName string
-	}{
-		FunctionName: target,
-	}
-
-	bytesReq, _ := json.Marshal(delReq)
-	bufferReader := bytes.NewBuffer(bytesReq)
-	httpReq, _ := http.NewRequest(http.MethodDelete, gatewayURL+"system/functions", bufferReader)
-
-	addAuthErr := sdk.AddBasicAuth(httpReq)
-	if addAuthErr != nil {
-		log.Printf("Basic auth error %s", addAuthErr)
-	}
-
-	response, err := c.Do(httpReq)
-
-	if err == nil {
-		defer response.Body.Close()
-		if response.Body != nil {
-			bodyBytes, bErr := ioutil.ReadAll(response.Body)
-			if bErr != nil {
-				log.Fatal(bErr)
-			}
-			log.Println(string(bodyBytes))
-		}
-	}
-
-	return err
-}
-
 func listFunctions(owner, gatewayURL string) ([]openFaaSFunction, error) {
 
 	var err error
 
-	c := http.Client{
-		Timeout: time.Second * 3,
-	}
-
 	request, _ := http.NewRequest(http.MethodGet, gatewayURL+"/function/list-functions?user="+owner, nil)
 
-	response, err := c.Do(request)
+	response, err := http.DefaultClient.Do(request)
 
 	if err == nil {
-		defer response.Body.Close()
-
 		if response.Body != nil {
+			defer response.Body.Close()
+
 			bodyBytes, bErr := ioutil.ReadAll(response.Body)
 			if bErr != nil {
 				log.Fatal(bErr)

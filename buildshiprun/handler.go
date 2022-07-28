@@ -2,6 +2,7 @@ package function
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -15,35 +16,44 @@ import (
 	"time"
 
 	"github.com/alexellis/hmac"
+	faasSDK "github.com/openfaas/faas-cli/proxy"
+	"github.com/openfaas/faas-cli/stack"
 	"github.com/openfaas/openfaas-cloud/sdk"
 )
 
 const (
-	GitLab = "gitlab"
+	// GitHub SCM
 	GitHub = "github"
+	// GitLab SCM
+	GitLab = "gitlab"
 )
+
+const scaleToZeroDefault = true
+const zeroScaleLabel = "com.openfaas.scale.zero"
 
 var (
 	imageValidator = regexp.MustCompile("(?:[a-zA-Z0-9./]*(?:[._-][a-z0-9]?)*(?::[0-9]+)?[a-zA-Z0-9./]+(?:[._-][a-z0-9]+)*/)*[a-zA-Z0-9]+(?:[._-][a-z0-9]+)+(?::[a-zA-Z0-9._-]+)?")
 )
 
-func validateRequest(req *[]byte) (err error) {
-	payloadSecret, err := sdk.ReadSecret("payload-secret")
-
-	if err != nil {
-		return fmt.Errorf("couldn't get payload-secret: %t", err)
-	}
-
-	xCloudSignature := os.Getenv("Http_X_Cloud_Signature")
-
-	err = hmac.Validate(*req, xCloudSignature, payloadSecret)
-
-	if err != nil {
-		return err
-	}
-
-	return nil
+type CPULimits struct {
+	Limit     string
+	Requests  string
+	Available bool
 }
+
+//FaaSAuth Authentication type for OpenFaaS
+type FaaSAuth struct {
+}
+
+//Set add basic authentication to the request
+func (auth *FaaSAuth) Set(req *http.Request) error {
+	return sdk.AddBasicAuth(req)
+}
+
+var (
+	timeout   = 3 * time.Second
+	namespace = ""
+)
 
 // Handle submits the tar to the of-builder then configures an OpenFaaS
 // deployment based upon stack.yml found in the Git repo. Finally starts
@@ -54,8 +64,6 @@ func Handle(req []byte) string {
 	if hmacErr != nil {
 		return fmt.Sprintf("invalid HMAC digest for tar: %s", hmacErr.Error())
 	}
-
-	c := &http.Client{}
 
 	builderURL := os.Getenv("builder_url")
 	gatewayURL := os.Getenv("gateway_url")
@@ -92,7 +100,7 @@ func Handle(req []byte) string {
 	r.Header.Set(sdk.CloudSignatureHeader, xCloudSignature)
 	r.Header.Set("Content-Type", "application/octet-stream")
 
-	res, err := c.Do(r)
+	res, err := http.DefaultClient.Do(r)
 
 	if err != nil {
 		log.Printf("of-builder error: %s\n", err)
@@ -119,12 +127,12 @@ func Handle(req []byte) string {
 	unmarshalErr := json.Unmarshal(buildBytes, &result)
 
 	if unmarshalErr != nil {
-		log.Printf("BuildResult unmarshalErr %s\n", err)
+		log.Printf("BuildResult unmarshalErr %s\n", unmarshalErr)
 
 		auditEvent.Message = fmt.Sprintf("buildshiprun failure reading response: %s, response: %s", unmarshalErr.Error(), string(buildBytes))
 		sdk.PostAudit(auditEvent)
 
-		status.AddStatus(sdk.StatusFailure, err.Error(), sdk.BuildFunctionContext(event.Service))
+		status.AddStatus(sdk.StatusFailure, unmarshalErr.Error(), sdk.BuildFunctionContext(event.Service))
 		statusErr := reportStatus(status, event.SCM)
 		if statusErr != nil {
 			log.Printf(statusErr.Error())
@@ -155,7 +163,7 @@ func Handle(req []byte) string {
 
 	log.Printf("buildshiprun: image '%s'\n", imageName)
 
-	logStatus, logErr := createPipelineLog(result, event, gatewayURL, c, payloadSecret)
+	logStatus, logErr := createPipelineLog(result, event, gatewayURL, payloadSecret)
 	if logErr != nil {
 		log.Printf("pipeline-log: error: %s", err.Error())
 	} else {
@@ -170,7 +178,7 @@ func Handle(req []byte) string {
 			log.Printf(statusErr.Error())
 		}
 
-		auditEvent.Message = fmt.Sprintf("buildshiprun failure: %s", msg)
+		auditEvent.Message = fmt.Sprintf("Error with buildshiprun: %s", msg)
 		sdk.PostAudit(auditEvent)
 
 		log.Printf("of-builder result: %s, logs: %s\n", result.Status, strings.Join(result.Log, "\n"))
@@ -178,9 +186,11 @@ func Handle(req []byte) string {
 		log.Fatal(msg)
 		return msg
 	}
+	// Initializing the client and context
+	client := faasSDK.NewClient(&FaaSAuth{}, gatewayURL, nil, &timeout)
+	ctx := context.Background()
 
 	if len(imageName) > 0 {
-
 		// Replace image name for "localhost" for deployment
 		imageName = getImageName(repositoryURL, pushRepositoryURL, imageName)
 
@@ -202,11 +212,39 @@ func Handle(req []byte) string {
 			private = 1
 		}
 
-		deploy := deployment{
-			Service: serviceValue,
-			Image:   imageName,
-			Network: "func_functions",
+		scaleToZero := scaleToZeroDefault
+
+		if val, ok := event.Labels[zeroScaleLabel]; ok && len(val) > 0 {
+			boolVal, err := strconv.ParseBool(val)
+			if err != nil {
+				log.Printf("error parsing label %s : %s", zeroScaleLabel, err.Error())
+			} else {
+				scaleToZero = boolVal
+			}
+		}
+
+		annotationWhitelist := []string{
+			"topic",
+			"schedule",
+			"com.openfaas.health.http.path",
+			"com.openfaas.health.http.initialDelay",
+		}
+
+		userAnnotations := buildAnnotations(annotationWhitelist, event.Annotations)
+		userAnnotations[sdk.FunctionLabelPrefix+"git-repo-url"] = event.RepoURL
+
+		deploy := &faasSDK.DeployFunctionSpec{
+			FunctionName: serviceValue,
+			Image:        imageName,
+			Network:      "func_functions",
 			Labels: map[string]string{
+				"faas_function":             serviceValue,
+				"app":                       serviceValue,
+				"com.openfaas.scale.min":    scalingMinLimit,
+				"com.openfaas.scale.max":    scalingMaxLimit,
+				"com.openfaas.scale.factor": scalingFactor,
+				zeroScaleLabel:              strconv.FormatBool(scaleToZero),
+
 				sdk.FunctionLabelPrefix + "git-cloud":      "1",
 				sdk.FunctionLabelPrefix + "git-owner":      event.Owner,
 				sdk.FunctionLabelPrefix + "git-owner-id":   fmt.Sprintf("%d", event.OwnerID),
@@ -215,21 +253,30 @@ func Handle(req []byte) string {
 				sdk.FunctionLabelPrefix + "git-sha":        event.SHA,
 				sdk.FunctionLabelPrefix + "git-private":    fmt.Sprintf("%d", private),
 				sdk.FunctionLabelPrefix + "git-scm":        event.SCM,
-				"faas_function":                            serviceValue,
-				"app":                                      serviceValue,
-				"com.openfaas.scale.min":    scalingMinLimit,
-				"com.openfaas.scale.max":    scalingMaxLimit,
-				"com.openfaas.scale.factor": scalingFactor,
+				sdk.FunctionLabelPrefix + "git-branch":     buildBranch(),
 			},
-			Annotations: map[string]string{
-				sdk.FunctionLabelPrefix + "git-repo-url": event.RepoURL,
-			},
-			Limits: Limits{
-				Memory: defaultMemoryLimit,
+			Annotations: userAnnotations,
+			FunctionResourceRequest: faasSDK.FunctionResourceRequest{
+				Limits:   &stack.FunctionResources{},
+				Requests: &stack.FunctionResources{},
 			},
 			EnvVars:                event.Environment,
 			Secrets:                event.Secrets,
 			ReadOnlyRootFilesystem: readOnlyRootFS,
+		}
+
+		deploy.FunctionResourceRequest.Limits.Memory = defaultMemoryLimit
+
+		cpuLimit := getCPULimit()
+		if cpuLimit.Available {
+
+			if len(cpuLimit.Limit) > 0 {
+				deploy.FunctionResourceRequest.Limits.CPU = cpuLimit.Limit
+			}
+
+			if len(cpuLimit.Requests) > 0 {
+				deploy.FunctionResourceRequest.Requests.CPU = cpuLimit.Requests
+			}
 		}
 
 		gatewayURL := os.Getenv("gateway_url")
@@ -238,8 +285,7 @@ func Handle(req []byte) string {
 			deploy.RegistryAuth = registryAuth
 		}
 
-		deployResult, err := deployFunction(deploy, gatewayURL, c)
-
+		deployResult, err := deployFunction(ctx, client, deploy, gatewayURL)
 		log.Println(deployResult)
 
 		if err != nil {
@@ -267,6 +313,37 @@ func Handle(req []byte) string {
 	return fmt.Sprintf("buildStatus %s %s", imageName, res.Status)
 }
 
+func buildAnnotations(whitelist []string, userValues map[string]string) map[string]string {
+	annotations := map[string]string{}
+	for k, v := range userValues {
+		for _, allowable := range whitelist {
+			if allowable == k {
+				annotations[k] = v
+			}
+		}
+	}
+
+	return annotations
+}
+
+func validateRequest(req *[]byte) (err error) {
+	payloadSecret, err := sdk.ReadSecret("payload-secret")
+
+	if err != nil {
+		return fmt.Errorf("couldn't get payload-secret: %t", err)
+	}
+
+	xCloudSignature := os.Getenv("Http_X_Cloud_Signature")
+
+	err = hmac.Validate(*req, xCloudSignature, payloadSecret)
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func getConfig(key string, defaultValue string) string {
 
 	res := os.Getenv(key)
@@ -278,7 +355,7 @@ func getConfig(key string, defaultValue string) string {
 
 // createPipelineLog sends a log to pipeline-log and will
 // fail silently if unavailable.
-func createPipelineLog(result sdk.BuildResult, event *sdk.Event, gatewayURL string, c *http.Client, payloadSecret string) (int, error) {
+func createPipelineLog(result sdk.BuildResult, event *sdk.Event, gatewayURL string, payloadSecret string) (int, error) {
 
 	p := sdk.PipelineLog{
 		CommitSHA: event.SHA,
@@ -296,7 +373,7 @@ func createPipelineLog(result sdk.BuildResult, event *sdk.Event, gatewayURL stri
 	digest := hmac.Sign(bytesOut, []byte(payloadSecret))
 	req.Header.Add(sdk.CloudSignatureHeader, "sha1="+hex.EncodeToString(digest))
 
-	res, err := c.Do(req)
+	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return http.StatusInternalServerError, err
 
@@ -325,6 +402,8 @@ func getEventFromEnv() (*sdk.Event, error) {
 	var err error
 	info := sdk.Event{}
 
+	info.Labels = make(map[string]string)
+
 	info.Service = os.Getenv("Http_Service")
 	info.Owner = os.Getenv("Http_Owner")
 
@@ -348,13 +427,39 @@ func getEventFromEnv() (*sdk.Event, error) {
 	envVars := make(map[string]string)
 
 	if len(httpEnv) > 0 {
-		envErr := json.Unmarshal([]byte(httpEnv), &envVars)
+		unmarshalErr := json.Unmarshal([]byte(httpEnv), &envVars)
 
-		if envErr == nil {
+		if unmarshalErr == nil {
 			info.Environment = envVars
 		} else {
-			log.Printf("Error un-marshaling env-vars for function %s, %s", info.Service, envErr)
+			log.Printf("Error un-marshaling env-vars map for function %s, %s", info.Service, unmarshalErr)
 			info.Environment = make(map[string]string)
+		}
+	}
+
+	httpLabels := os.Getenv("Http_Labels")
+	labels := make(map[string]string)
+
+	if len(httpLabels) > 0 {
+		marshalErr := json.Unmarshal([]byte(httpLabels), &labels)
+		if marshalErr == nil {
+			info.Labels = labels
+		} else {
+			log.Printf("Error un-marshaling labels map for function %s, %s", info.Service, marshalErr)
+			info.Labels = make(map[string]string)
+		}
+	}
+
+	httpAnnotations := os.Getenv("Http_Annotations")
+	annotations := make(map[string]string)
+
+	if len(httpAnnotations) > 0 {
+		marshalErr := json.Unmarshal([]byte(httpAnnotations), &annotations)
+		if marshalErr == nil {
+			info.Annotations = annotations
+		} else {
+			log.Printf("Error un-marshaling annotations map for function %s, %s", info.Service, marshalErr)
+			info.Annotations = make(map[string]string)
 		}
 	}
 
@@ -367,13 +472,13 @@ func getEventFromEnv() (*sdk.Event, error) {
 		if secretErr != nil {
 			log.Println(secretErr)
 		}
-
 	}
 
 	info.Secrets = secretVars
 
+	owner := strings.ToLower(info.Owner)
 	for i := 0; i < len(info.Secrets); i++ {
-		info.Secrets[i] = info.Owner + "-" + info.Secrets[i]
+		info.Secrets[i] = owner + "-" + info.Secrets[i]
 	}
 
 	log.Printf("%d env-vars for %s", len(info.Environment), info.Service)
@@ -381,32 +486,15 @@ func getEventFromEnv() (*sdk.Event, error) {
 	return &info, err
 }
 
-func functionExists(deploy deployment, gatewayURL string, c *http.Client) (bool, error) {
-
-	r, _ := http.NewRequest(http.MethodGet, gatewayURL+"system/functions", nil)
-
-	addAuthErr := sdk.AddBasicAuth(r)
-	if addAuthErr != nil {
-		log.Printf("Basic auth error %s", addAuthErr)
-	}
-
-	res, err := c.Do(r)
-
+func functionExists(ctx context.Context, client *faasSDK.Client, functionName string, gatewayURL string) (bool, error) {
+	// client := faasSDK.NewClient(&FaaSAuth{}, gatewayURL, nil, &timeout)
+	functions, err := client.ListFunctions(ctx, namespace)
 	if err != nil {
-		fmt.Println(err)
 		return false, err
 	}
 
-	defer res.Body.Close()
-
-	fmt.Println("functionExists status: " + res.Status)
-	result, _ := ioutil.ReadAll(res.Body)
-
-	functions := []function{}
-	json.Unmarshal(result, &functions)
-
 	for _, function1 := range functions {
-		if function1.Name == deploy.Service {
+		if function1.Name == functionName {
 			return true, nil
 		}
 	}
@@ -414,49 +502,22 @@ func functionExists(deploy deployment, gatewayURL string, c *http.Client) (bool,
 	return false, err
 }
 
-func deployFunction(deploy deployment, gatewayURL string, c *http.Client) (string, error) {
-	exists, err := functionExists(deploy, gatewayURL, c)
-
-	bytesOut, _ := json.Marshal(deploy)
-
-	reader := bytes.NewBuffer(bytesOut)
-
-	fmt.Println("Deploying: " + deploy.Image + " as " + deploy.Service)
-	var res *http.Response
-	var httpReq *http.Request
-	var method string
+func deployFunction(ctx context.Context, client *faasSDK.Client, deploySpec *faasSDK.DeployFunctionSpec, gatewayURL string) (string, error) {
+	var (
+		err error
+	)
+	exists, err := functionExists(ctx, client, deploySpec.FunctionName, gatewayURL)
+	log.Println("Deploying: " + deploySpec.Image + " as " + deploySpec.FunctionName)
 	if exists {
-		method = http.MethodPut
-	} else {
-		method = http.MethodPost
+		deploySpec.Update = true
 	}
 
-	httpReq, err = http.NewRequest(method, gatewayURL+"system/functions", reader)
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	addAuthErr := sdk.AddBasicAuth(httpReq)
-	if addAuthErr != nil {
-		log.Printf("Basic auth error %s", addAuthErr)
+	resStatus := client.DeployFunction(ctx, deploySpec)
+	log.Printf("Deploy status - %d", resStatus)
+	if resStatus < 200 || resStatus > 299 {
+		return "", fmt.Errorf("http status code %d", resStatus)
 	}
-
-	res, err = c.Do(httpReq)
-
-	if err != nil {
-		log.Printf("error %s to system/functions %s", method, err)
-		return "", err
-	}
-
-	defer res.Body.Close()
-
-	log.Printf("Deploy status [%s] - %d", method, res.StatusCode)
-
-	buildStatus, _ := ioutil.ReadAll(res.Body)
-
-	if res.StatusCode < 200 || res.StatusCode > 299 {
-		return "", fmt.Errorf("http status code %d, error: %s", res.StatusCode, string(buildStatus))
-	}
-
-	return string(buildStatus), err
+	return fmt.Sprintf("%s deployed successfully", deploySpec.FunctionName), err
 }
 
 func enableStatusReporting() bool {
@@ -513,28 +574,6 @@ func validImage(image string) bool {
 	return false
 }
 
-type deployment struct {
-	Service string
-	Image   string
-	Network string
-	Labels  map[string]string
-	Limits  Limits
-	// EnvVars provides overrides for functions.
-	EnvVars                map[string]string `json:"envVars"`
-	Secrets                []string
-	ReadOnlyRootFilesystem bool   `json:"readOnlyRootFilesystem"`
-	RegistryAuth           string `json:"registryAuth"`
-	Annotations            map[string]string
-}
-
-type Limits struct {
-	Memory string
-}
-
-type function struct {
-	Name string
-}
-
 func getRegistryAuthSecret() string {
 	path := "/var/openfaas/secrets/swarm-pull-secret"
 	if _, err := os.Stat(path); err == nil {
@@ -545,6 +584,35 @@ func getRegistryAuthSecret() string {
 		return strings.TrimSpace(string(res))
 	}
 	return ""
+}
+
+// getCPULimit gives the CPU limit in millis if using Kubernetes
+// for other orchestrators Available is set to false in the
+// returned struct
+func getCPULimit() CPULimits {
+	var available bool
+
+	kubernetesPort := "KUBERNETES_SERVICE_PORT"
+	limit := ""
+	requests := ""
+
+	if _, exists := os.LookupEnv(kubernetesPort); exists {
+
+		if val, ok := os.LookupEnv("function_cpu_limit_milli"); ok && len(val) > 0 {
+			limit = fmt.Sprintf("%sm", val)
+		}
+		if val, ok := os.LookupEnv("function_cpu_requests_milli"); ok && len(val) > 0 {
+			requests = fmt.Sprintf("%sm", val)
+		}
+
+		available = len(limit) > 0 || len(requests) > 0
+	}
+
+	return CPULimits{
+		Available: available,
+		Limit:     limit,
+		Requests:  requests,
+	}
 }
 
 func getMemoryLimit() string {
@@ -595,9 +663,7 @@ func reportGitLabStatus(status *sdk.Status) {
 	digest := hmac.Sign(statusBytes, []byte(payloadSecret))
 	req.Header.Add(sdk.CloudSignatureHeader, "sha1="+hex.EncodeToString(digest))
 
-	client := http.Client{}
-
-	res, resErr := client.Do(req)
+	res, resErr := http.DefaultClient.Do(req)
 	if resErr != nil {
 		log.Printf("unexpected error while retrieving response: %s", resErr.Error())
 	}
@@ -613,4 +679,12 @@ func reportGitLabStatus(status *sdk.Status) {
 		log.Printf("unexpected error while reading response body: %s", bodyErr.Error())
 	}
 	status.CommitStatuses = make(map[string]sdk.CommitStatus)
+}
+
+func buildBranch() string {
+	branch := os.Getenv("build_branch")
+	if branch == "" {
+		return "master"
+	}
+	return branch
 }

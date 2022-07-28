@@ -5,7 +5,6 @@ const getRepoURL = annotations => annotations['com.openfaas.cloud.git-repo-url']
 
 class FunctionsApi {
   constructor() {
-    this.selectedRepo = '';
     this.prettyDomain = window.PRETTY_URL;
     this.queryPrettyUrl = window.QUERY_PRETTY_URL === 'true';
 
@@ -20,9 +19,9 @@ class FunctionsApi {
     this.cachedFunctions = {};
   }
 
-  parseFunctionResponse({
-    data
-  }, user) {
+  parseFunctionResponse({ data }, userName) {
+    data = data || [];
+    const user = userName.toLowerCase();
     data.sort((a, b) => {
       if (
         !a ||
@@ -52,7 +51,8 @@ class FunctionsApi {
       if (this.queryPrettyUrl) {
         endpoint = this.prettyDomain
           .replace('user', user)
-          .replace('function', shortName);
+        endpoint = buildPublicFunctionURL(endpoint, shortName)
+
       } else {
         endpoint = this.baseURL + '/function/' + item.name;
       }
@@ -87,13 +87,37 @@ class FunctionsApi {
         gitDeployTime: item.labels['com.openfaas.cloud.git-deploytime'],
         gitPrivate: isPrivate,
         gitSha: item.labels['com.openfaas.cloud.git-sha'],
+        gitBranch: item.labels['com.openfaas.cloud.git-branch'],
         gitRepoURL: getRepoURL(item.annotations || {}),
         minReplicas: item.labels['com.openfaas.scale.min'],
         maxReplicas: item.labels['com.openfaas.scale.max'],
       };
     });
   }
-  fetchFunctions(user) {
+
+  fetchFunctions(user, fetchOrgs= true) {
+    let orgs = [];
+    orgs.push(user);
+
+    // if we are fetching orgs too (only for dashboard) then add them here
+    if (fetchOrgs) {
+      let organizations = window.ALL_CLAIMS;
+      if (organizations && organizations.length > 0 ) {
+        orgs = orgs.concat(organizations.split(',')).filter(item => item);
+      }
+    }
+    // This needs to be a unique set - as we add the "user" above, which might be the org
+    orgs = [...new Set(orgs)];
+
+    let fetchPromises = [];
+    orgs.forEach((org)=> {
+      fetchPromises.push(this.fetchFunctionsByUser(org));
+    });
+
+    return Promise.all(fetchPromises);
+  }
+
+  fetchFunctionsByUser(user) {
     const url = `${this.apiBaseUrl}/list-functions?user=${user}`;
     return axios
       .get(url)
@@ -118,7 +142,8 @@ class FunctionsApi {
       }
 
       // fetch functions if cache not found
-      this.fetchFunctions(user).then(() => {
+
+      this.fetchFunctions(user, false).then(() => {
         const fn = this.cachedFunctions[key];
         fn !== undefined ?
           resolve(fn) :
@@ -134,7 +159,7 @@ class FunctionsApi {
       timePeriod
     } = params;
     try {
-      const url = `${this.apiBaseUrl}/system-metrics?function=${user}-${functionName}&metrics_window=${timePeriod}`;
+      const url = `${this.apiBaseUrl}/metrics?function=${user.toLowerCase()}-${functionName}&metrics_window=${timePeriod}&user=${user}`;
       const result = await axios
         .get(url);
       return result.data;
@@ -144,18 +169,45 @@ class FunctionsApi {
     }
   }
 
-  fetchFunctionLog({
+  fetchBuildLog({
     commitSHA,
     repoPath,
-    functionName
+    functionName,
+    user
   }) {
     const url = `${
       this.apiBaseUrl
-    }/pipeline-log?commitSHA=${commitSHA}&repoPath=${repoPath}&function=${functionName}`;
+    }/pipeline-log?commitSHA=${commitSHA}&repoPath=${repoPath}&function=${functionName}&user=${user}`;
     return axios.get(url).then(res => {
       return res.data;
     });
   }
+
+  fetchFunctionLog({
+                  longFnName,
+                  user
+                }) {
+    const url = `${
+        this.apiBaseUrl
+    }/function-logs?function=${longFnName}&user=${user}`;
+
+    return axios.get(url).then(res => {
+          return res.data;
+        }).catch(
+          fail => {
+            throw Error("Failed to fetch function logs - is the function scaled to 0? \nmessage:" + fail.message)
+        });
+  }
+}
+
+export const buildPublicFunctionURL = (url, newEnding) => {
+  if (url.endsWith("/")) {
+    url = url.substr(0, url.length - 1)
+  }
+  if (!url.endsWith("function")){
+    return url
+  }
+    return url.substr(0, url.length - "function".length) + newEnding
 }
 
 export const functionsApi = new FunctionsApi();

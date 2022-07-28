@@ -59,7 +59,7 @@ func Handle(req []byte) string {
 	err = yaml.Unmarshal(req, &userSecret)
 
 	if err != nil {
-		fmt.Println("couldn't unmarshall secrets.yml\n", err)
+		fmt.Println("couldn't unmarshal secrets.yml\n", err)
 		os.Exit(-1)
 	}
 
@@ -67,11 +67,12 @@ func Handle(req []byte) string {
 		return fmt.Sprintf("invalid owner name %s", event.owner)
 	}
 
-	if strings.HasPrefix(userSecret.Metadata.Name, event.owner) == false {
-		return fmt.Errorf("unable to bind a secret which does not start with owner name: %s", event.owner).Error()
-	}
+	name := strings.ToLower(userSecret.Metadata.Name)
+	ownerNormalized := strings.ToLower(event.owner)
 
-	name := fmt.Sprintf("%s", userSecret.Metadata.Name)
+	if !strings.HasPrefix(name, ownerNormalized) {
+		return fmt.Errorf("unable to bind a secret which does not start with owner name: %s", ownerNormalized).Error()
+	}
 
 	existingSS, err := ssc.SealedSecrets(userSecret.Metadata.Namespace).Get(name, metav1.GetOptions{})
 
@@ -99,7 +100,7 @@ func Handle(req []byte) string {
 	ss.ObjectMeta = *userSecret.Metadata
 	ss.ObjectMeta.Name = name
 	ss.Spec = ssv1alpha1.SealedSecretSpec{
-		EncryptedData: map[string][]byte{},
+		EncryptedData: map[string]string{},
 	}
 
 	err = updateEncryptedData(&ss, &userSecret)
@@ -127,7 +128,7 @@ func updateEncryptedData(ss *ssv1alpha1.SealedSecret, userSecret *SealedSecret) 
 			return fmt.Errorf("can't decode base64 string (%s) - error: %s", k, err)
 		}
 
-		ss.Spec.EncryptedData[k] = encodedBytes
+		ss.Spec.EncryptedData[k] = base64.StdEncoding.EncodeToString(encodedBytes)
 	}
 
 	return nil
@@ -145,13 +146,13 @@ type eventInfo struct {
 	owner string
 }
 
-type SealedSecretSpec struct {
-	EncryptedData map[string]string `yaml:"encryptedData"`
-}
-
 type SealedSecret struct {
 	ApiVersion string             `yaml:"apiVersion"`
 	Kind       string             `yaml:"kind"`
 	Metadata   *metav1.ObjectMeta `yaml:"metadata"`
 	Spec       SealedSecretSpec   `yaml:"spec"`
+}
+
+type SealedSecretSpec struct {
+	EncryptedData map[string]string `yaml:"encryptedData"`
 }

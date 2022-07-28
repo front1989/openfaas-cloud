@@ -19,7 +19,7 @@ The Dashboard is a SPA(Single Page App) made with React and will require the fol
 This may be simpler than deploying the builder and connecting your OpenFaaS Cloud to a GitHub App.
 
 ```
-$ faas-cli store deploy figlet --name alexellis-figlet --label Git-Owner=alexellis \
+$ faas-cli store deploy figlet --name alexellis-figlet --label com.openfaas.cloud.git-owner=alexellis \
  --label com.openfaas.cloud.git-repo=figlet \
  --label com.openfaas.cloud.git-sha=665d9597547d8e0425630ba2dbb73c2951a61ce2 \
  --label com.openfaas.cloud.git-deploytime=1533026741 \
@@ -37,6 +37,16 @@ $ faas-cli store deploy nodeinfo --name alexellis-nodeinfo \
  --label com.openfaas.cloud.git-cloud=1 \
  --label com.openfaas.scale.min=1 --label com.openfaas.scale.max=4 --network=func_functions \
  --annotation com.openfaas.cloud.git-repo-url=https://github.com/alexellis/nodeinfo
+```
+
+### Deploy SealedSecrets public key
+
+The dashboard serves the SealedSecrets public key file in `/var/openfaas/secrets/pub-cert.pem`.
+
+To mount the key in Kubernetes, run:
+
+```
+$ kubectl create secret generic sealedsecrets-public-key -n openfaas-fn --from-file=pub-cert.pem
 ```
 
 ### Deploy at least the list-functions function
@@ -64,7 +74,7 @@ $ faas-cli deploy --filter="system-dashboard"
 If you have satisfied the prerequisites, the following command should create the assets for the Dashboard.
 
 ```bash
-make
+make build-dist
 ```
 
 **Edit `stack.yml` if needed.**
@@ -81,7 +91,7 @@ Set `public_url` to be the URL for the IP / DNS of the OpenFaaS Cloud.
 
 Set `cookie_root_domain` when using auth.
 
-Example with domain `o6s.io`:
+Example with domain `.system.o6s.io`:
 
 ```
 cookie_root_domain: ".system.o6s.io"
@@ -89,11 +99,10 @@ cookie_root_domain: ".system.o6s.io"
 
 **Deploy**
 
-> Don't forget to pull the `node8-express-template`
+Don't forget to pull the custom templates such as: `node10-express`:
 
 ```
-$ faas-cli template pull https://github.com/openfaas-incubator/node8-express-template
-$ faas-cli up
+$ faas-cli template pull stack
 ```
 
 ## Development
@@ -107,7 +116,7 @@ npm i -g yarn
 The source code for the dashboard (written in React.js) with Bootstrap 3 has to be built into a generated folder. In order to do this type in `make`
 
 ```bash
-make
+make build-dist
 ```
 
 You will see new files written into `of-cloud-dashboard/dist`

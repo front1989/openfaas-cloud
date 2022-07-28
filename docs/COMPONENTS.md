@@ -12,7 +12,7 @@ Main flows:
 2. User removes GitHub/GitLab app from one or more repos - garbage collection is invoked removing 1-many functions
 3. User accesses function via router using "pretty URL" format and request is routed to function via API Gateway
 
-![](./docs/conceptual-overview.png)
+![](https://github.com/openfaas/openfaas-cloud/blob/master/docs/conceptual-overview.png?raw=true)
 
 
 ### Microservices
@@ -25,11 +25,11 @@ A builder daemon which exposes the GRPC of-buildkit service via HTTP.
 
 The buildkit GRPC daemon which builds the image and pushes it to the internal registry. The image is tagged with the SHA of the Git commit event.
 
-* Microservice: of-router
+* Microservice: edge-router
 
 The router component is the only ingress point for HTTP requests for serving functions and for enabling the GitHub/GitLab integration. It translates "pretty URLS" into URLs namespaced by a user prefix on the OpenFaaS API Gateway.
 
-* Microservice: of-auth
+* Microservice: edge-auth
 
 The auth service validates routes, can issue a JWT token and is called by the router component for every HTTP request.
 
@@ -79,6 +79,10 @@ Removes functions which were removed or renamed within the repo for the given us
 
 Collects events from other functions for auditing. These can be connected to a Slack webhook URL or the function can be swapped for the echo function for storage in container logs.
 
-* Function: system-metrics
+* Function: metrics
 
 Handler folder should be renamed to just `metrics`. Function can provide stats on invocations for function over given time period split by success/error.
+
+* Function: function-logs
+
+Fetches logs from the gateway to serve to the caller, there are checks that the barer has the permissions to view those logs based on the labels on the function that they request logs for

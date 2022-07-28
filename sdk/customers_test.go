@@ -1,7 +1,9 @@
 package sdk
 
 import (
+	"io/ioutil"
 	"os"
+	"path"
 	"testing"
 )
 
@@ -92,5 +94,92 @@ func Test_ValidateCustomerList(t *testing.T) {
 		if value != test.Output {
 			t.Errorf("Expected value: %v, got: %v", test.Output, value)
 		}
+	}
+}
+
+func TestGet_InvalidCustomerLiveGitHubFile(t *testing.T) {
+	c := NewCustomers("", "")
+
+	valid := []string{"not-alexellis"}
+
+	for _, user := range valid {
+		val, err := c.Get(user)
+		if err != nil {
+			t.Errorf("error fetching users: %s", err.Error())
+			t.Fail()
+		}
+
+		if val != false {
+			t.Errorf("user %s should not be a customer, but was", user)
+			t.Fail()
+		}
+	}
+}
+
+func TestGet_ExistingCustomerLiveGitHubFile(t *testing.T) {
+	c := NewCustomers("", "")
+
+	valid := []string{"alexellis", "rgee0", "LucasRoesler"}
+
+	for _, user := range valid {
+		val, err := c.Get(user)
+		if err != nil {
+			t.Errorf("error fetching users: %s", err.Error())
+			t.Fail()
+		}
+
+		if val != true {
+			t.Errorf("user %s should be a customer, but wasn't", user)
+			t.Fail()
+		}
+	}
+}
+
+func TestGet_FromFile(t *testing.T) {
+
+	tmpPath := path.Join(os.TempDir(), "customers")
+	writeErr := ioutil.WriteFile(tmpPath, []byte(`openfaas
+inlets`), 0700)
+	if writeErr != nil {
+		t.Error(writeErr)
+		t.Fail()
+	}
+
+	defer func() {
+		os.RemoveAll(tmpPath)
+	}()
+
+	c := NewCustomers(tmpPath, "")
+
+	valid := []string{"openfaas", "inlets"}
+
+	for _, user := range valid {
+		val, err := c.Get(user)
+		if err != nil {
+			t.Errorf("error fetching users: %s", err.Error())
+			t.Fail()
+		}
+
+		if val != true {
+			t.Errorf("user %s should be a customer, but wasn't", user)
+			t.Fail()
+		}
+	}
+}
+
+func TestformatUsername_TrimsNewline(t *testing.T) {
+	want := `alexellis`
+	got := formatUsername(`alexelllis
+`)
+	if got != want {
+		t.Errorf(`want %q, got %q`, want, got)
+	}
+}
+
+func TestformatUsername_TrimsReturn(t *testing.T) {
+	want := `alexellis`
+	got := formatUsername("alexelllis\r")
+	if got != want {
+		t.Errorf(`want %q, got %q`, want, got)
 	}
 }

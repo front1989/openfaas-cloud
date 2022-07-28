@@ -10,8 +10,8 @@ import {
   Collapse,
 } from 'reactstrap';
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faGithub } from '@fortawesome/free-brands-svg-icons';
-import { faSignOutAlt } from '@fortawesome/free-solid-svg-icons';
+import { faGithub, faGitlab } from '@fortawesome/free-brands-svg-icons';
+import { faKey, faSignOutAlt } from '@fortawesome/free-solid-svg-icons';
 
 class NavBarWithRouter extends Component {
   state = {
@@ -94,13 +94,38 @@ class NavBarWithRouter extends Component {
         <Collapse isOpen={this.state.isActive} navbar>
           <Nav navbar>
             { this.createNavLink(pathname, user, 'Home') }
+            { window.GITHUB_APP_URL &&
+              <NavItem>
+                <NavLink
+                  className="py-3 px-3 px-md-2"
+                  href={window.GITHUB_APP_URL}
+                  title="Install on GitHub repo to deploy functions to OpenFaaS Cloud"
+                >
+                  <FontAwesomeIcon icon={faGithub} className="mr-1" />
+                  GitHub App
+                </NavLink>
+              </NavItem>
+            }
+            { window.GITLAB_URL &&
+              <NavItem>
+                <NavLink
+                  className="py-3 px-3 px-md-2"
+                  href={window.GITLAB_URL}
+                  title="GitLab instance to deploy functions to OpenFaaS Cloud"
+                >
+                  <FontAwesomeIcon icon={faGitlab} className="mr-1" />
+                  GitLab
+                </NavLink>
+              </NavItem>
+            }
             <NavItem>
               <NavLink
                 className="py-3 px-3 px-md-2"
-                href="https://github.com/openfaas/openfaas-cloud"
+                href="api/pub-cert.pem"
+                title="Encrypt function secrets for use in your git repository"
               >
-                <FontAwesomeIcon icon={faGithub} className="mr-1" />
-                GitHub
+                <FontAwesomeIcon icon={faKey} className="mr-1" />
+                Public Key
               </NavLink>
             </NavItem>
           </Nav>

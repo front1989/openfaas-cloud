@@ -1,12 +1,15 @@
 package function
 
 import (
+	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"strings"
 	"testing"
 
 	// internal dependencies
+	"github.com/openfaas/faas-cli/stack"
 	"github.com/openfaas/openfaas-cloud/sdk"
 )
 
@@ -103,103 +106,78 @@ func Test_getRepositoryURL_whenGetTokenReturnsError_WhenRepositoryIsPrivate(t *t
 	}
 }
 
-func Test_formatTemplateReposValid(t *testing.T) {
+func Test_formatTemplateRepos(t *testing.T) {
 	formalRepos := []string{
 		"https://github.com/openfaas/templates",
-		"https://github.com/openfaas-incubator/node8-express-template.git",
-		"https://github.com/openfaas-incubator/golang-http-template.git",
 	}
 
 	tests := []struct {
 		title         string
 		envRepos      string
 		expectedRepos []string
+		expectedError bool
 	}{
 		{
 			title:         "Templates with no added custom repositories",
 			envRepos:      "",
 			expectedRepos: formalRepos,
+			expectedError: false,
 		},
 		{
 			title:         "Templates with single added custom repository",
 			envRepos:      "https://github.com/my-custom/repo.git",
 			expectedRepos: append(formalRepos, "https://github.com/my-custom/repo.git"),
+			expectedError: false,
 		},
 		{
 			title:         "Templates with two added custom repositories without spaces",
 			envRepos:      "https://github.com/my-custom/repo.git,https://github.com/another/repo.git",
 			expectedRepos: append(formalRepos, ([]string{"https://github.com/my-custom/repo.git", "https://github.com/another/repo.git"})...),
+			expectedError: false,
 		},
-	}
-	for _, test := range tests {
-		os.Setenv("custom_templates", test.envRepos)
-		t.Run(test.title, func(t *testing.T) {
-			templateRepos := formatTemplateRepos()
-			for _, templateRepo := range templateRepos {
-				for final, expectedRepo := range test.expectedRepos {
-					if expectedRepo == templateRepo {
-						continue
-					}
-					if final == len(test.expectedRepos) {
-						t.Errorf("Expecting repositories: \n`%s` \ngot: \n`%s`",
-							strings.Join(test.expectedRepos, " "),
-							strings.Join(templateRepos, " "))
-					}
-
-				}
-			}
-		})
-	}
-}
-
-func Test_formatTemplateReposUnvalid(t *testing.T) {
-	formalRepos := []string{
-		"https://github.com/openfaas/templates",
-		"https://github.com/openfaas-incubator/node8-express-template.git",
-		"https://github.com/openfaas-incubator/golang-http-template.git",
-	}
-
-	tests := []struct {
-		title         string
-		envRepos      string
-		expectedRepos []string
-	}{
 		{
 			title:         "Variable set invalid",
 			envRepos:      " ",
 			expectedRepos: formalRepos,
+			expectedError: true,
 		},
 		{
 			title:         "Variable set with random symbols",
 			envRepos:      "123randomzxc",
 			expectedRepos: formalRepos,
+			expectedError: true,
 		},
 		{
 			title:         "Invalid github URLs (Missing `https://`)",
 			envRepos:      "www.github.com/my-custom/repo.git",
 			expectedRepos: formalRepos,
+			expectedError: true,
 		},
 		{
 			title:         "Setting values with spaces between commas",
 			envRepos:      " , https://github.com/my-custom/repo.git, https://github.com/another/repo.git, ",
 			expectedRepos: append(formalRepos, ([]string{"https://github.com/my-custom/repo.git", "https://github.com/another/repo.git"})...),
+			expectedError: true,
 		},
 	}
 	for _, test := range tests {
-		os.Setenv("custom_templates", test.envRepos)
 		t.Run(test.title, func(t *testing.T) {
-			templateRepos := formatTemplateRepos()
-			for _, templateRepo := range templateRepos {
-				for final, expectedRepo := range test.expectedRepos {
-					if expectedRepo == templateRepo {
-						continue
-					}
-					if final == len(test.expectedRepos) {
-						t.Errorf("Expecting repositories: \n`%s` \ngot: \n`%s`",
-							strings.Join(test.expectedRepos, " "),
-							strings.Join(templateRepos, " "))
-					}
-
+			os.Setenv("custom_templates", test.envRepos)
+			templateRepos, err := formatTemplateRepos()
+			if err != nil && !test.expectedError {
+				t.Errorf("want: no error, got: %t", err)
+			}
+			if err == nil && test.expectedError {
+				t.Errorf("want: %t got: nil", err)
+			}
+			if len(templateRepos) != len(test.expectedRepos) {
+				t.Errorf("want: \n`%s` \ngot: \n`%s`",
+					strings.Join(test.expectedRepos, " "),
+					strings.Join(templateRepos, " "))
+			}
+			for i := 0; i < len(test.expectedRepos); i++ {
+				if test.expectedRepos[i] != templateRepos[i] {
+					t.Errorf("want: %s got: %s", test.expectedRepos[i], templateRepos[i])
 				}
 			}
 		})
@@ -249,4 +227,132 @@ func Test_formatGitLabCloneURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_existingTemplates(t *testing.T) {
+	expectingTemplates := []string{"go", "python", "rust"}
+	templateDir, dirErr := mockTempTemplatesDir(expectingTemplates, "template")
+	if dirErr != nil {
+		t.Errorf("Error while mocking template dir: %s", dirErr)
+	}
+	defer os.RemoveAll(templateDir)
+	dir := os.TempDir()
+	templates, templatesError := existingTemplates(dir)
+	if templatesError != nil {
+		t.Errorf("Error while checking templates: %s", templatesError)
+	}
+	for _, template := range templates {
+		for lastTemplate, expectedTemplate := range expectingTemplates {
+			if template == expectedTemplate {
+				break
+			}
+			if lastTemplate == len(expectingTemplates)-1 &&
+				expectedTemplate != template {
+				t.Errorf("Error template: %s not found in: %v", template, expectingTemplates)
+			}
+		}
+	}
+}
+
+func Test_checkCompatibleTemplates(t *testing.T) {
+	tests := []struct {
+		title              string
+		functionDefinition *stack.Services
+		expectedError      error
+	}{
+		{
+			title: "Function language exists in the fetched templates",
+			functionDefinition: &stack.Services{Functions: map[string]stack.Function{
+				"fn1": {Language: "go"},
+			},
+			},
+			expectedError: nil,
+		},
+		{
+			title: "Function language does not exist in the fetched templates",
+			functionDefinition: &stack.Services{Functions: map[string]stack.Function{
+				"fn1": {Language: "smalltalk"},
+			},
+			},
+			expectedError: fmt.Errorf("Not supported language: `smalltalk` for function: `fn1`"),
+		},
+	}
+	existingTemplates := []string{"go", "python", "rust", "java"}
+	templateDir, dirErr := mockTempTemplatesDir(existingTemplates, "template")
+	if dirErr != nil {
+		t.Errorf("Error while createding template dir: %s", dirErr)
+	}
+	defer os.RemoveAll(templateDir)
+	tmpDir := os.TempDir()
+	for _, test := range tests {
+		compatibilityError := checkCompatibleTemplates(test.functionDefinition, tmpDir)
+		if compatibilityError != nil && compatibilityError != test.expectedError {
+			if compatibilityError.Error() != test.expectedError.Error() {
+				t.Errorf("Expected error: `%s`, got: `%s`",
+					test.expectedError.Error(),
+					compatibilityError.Error())
+			}
+		}
+	}
+}
+
+func Test_JoinErrors_Single_Error(t *testing.T) {
+	err := fmt.Errorf("%s, %s", "http://some-repo", errors.New("some Error"))
+	list := []error{err}
+	want := fmt.Errorf("%s, %s\n", "http://some-repo", errors.New("some Error"))
+	got := joinErrors(list)
+
+	if got == nil {
+		t.Error("Expected Error, got nil")
+	}
+
+	if got.Error() != want.Error() {
+		t.Errorf("Expected %v: got: %v", want, got)
+	}
+}
+
+func Test_JoinErrors_Multiple_Errors(t *testing.T) {
+	err := fmt.Errorf("%s, %s", "http://some-repo", errors.New("some Error"))
+	list := []error{err, err}
+	want := fmt.Errorf("%s, %s\n", "http://some-repo", errors.New("some Error"))
+	got := joinErrors(list)
+
+	if got == nil {
+		t.Error("Expected Error, got nil")
+	}
+	wantErr := fmt.Sprintf("%s\n%s\n", err.Error(), err.Error())
+
+	if got.Error() != wantErr {
+		t.Errorf("Expected %v: got: %v", want, got)
+	}
+}
+
+func Test_JoinErrors_No_Errors(t *testing.T) {
+	list := []error{}
+	got := joinErrors(list)
+
+	if got != nil {
+		t.Errorf("Expected nil , got %v", got)
+	}
+}
+
+func mockTempTemplatesDir(files []string, directory string) (string, error) {
+	permissions := 0744
+	tmpDir := os.TempDir()
+	templatesDir := fmt.Sprintf("%s/%s", tmpDir, directory)
+	dirErr := os.MkdirAll(templatesDir, os.FileMode(permissions))
+	if dirErr != nil {
+		return templatesDir, dirErr
+	}
+	for _, file := range files {
+		dirErr := os.MkdirAll(templatesDir+"/"+file, os.FileMode(permissions))
+		if dirErr != nil {
+			return templatesDir, dirErr
+		}
+	}
+	fileErr := ioutil.WriteFile(templatesDir+"/some.txt", []byte{}, os.FileMode(permissions))
+	if dirErr != nil {
+		return templatesDir, fileErr
+	}
+	return templatesDir, nil
 }

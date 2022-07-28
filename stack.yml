@@ -1,15 +1,16 @@
 provider:
-  name: faas
+  name: openfaas
   gateway: http://127.0.0.1:8080
 
 functions:
   system-github-event:
     lang: go
     handler: ./github-event
-    image: functions/github-event:0.7.1
+    image: ghcr.io/${REPO:-openfaas}/ofc-github-event:${TAG:-dev}
     labels:
       openfaas-cloud: "1"
       role: openfaas-system
+      com.openfaas.scale.zero: false
     environment:
       validate_hmac: true
       write_debug: true
@@ -21,14 +22,21 @@ functions:
     secrets:
       - github-webhook-secret
       - payload-secret
+      - customers
+    limits:
+      memory: 128Mi
+    requests:
+      memory: 32Mi
+      cpu: 50m
 
   github-push:
     lang: go
     handler: ./github-push
-    image: functions/github-push:0.7.1
+    image: ghcr.io/${REPO:-openfaas}/ofc-github-push:${TAG:-dev}
     labels:
       openfaas-cloud: "1"
       role: openfaas-system
+      com.openfaas.scale.zero: false
     environment:
       validate_hmac: true
       read_timeout: 10s
@@ -41,14 +49,20 @@ functions:
     secrets:
       - github-webhook-secret
       - payload-secret
-
+      - customers
+    limits:
+      memory: 128Mi
+    requests:
+      memory: 32Mi
+      cpu: 50m
   git-tar:
     lang: dockerfile
     handler: ./git-tar
-    image: functions/of-git-tar:0.9.1
+    image: ghcr.io/${REPO:-openfaas}/ofc-git-tar:${TAG:-dev}
     labels:
       openfaas-cloud: "1"
       role: openfaas-system
+      com.openfaas.scale.zero: false
     environment:
       read_timeout: 15m
       write_timeout: 15m
@@ -60,16 +74,22 @@ functions:
     secrets:
       - payload-secret
       - private-key
-# Uncomment this for GitLab
-#      - gitlab-api-token
+  # Uncomment this for GitLab
+  #      - gitlab-api-token
+    limits:
+      memory: 128Mi
+    requests:
+      memory: 32Mi
+      cpu: 50m
 
   buildshiprun:
     lang: go
     handler: ./buildshiprun
-    image: functions/of-buildshiprun:0.9.2
+    image: ghcr.io/${REPO:-openfaas}/ofc-buildshiprun:${TAG:-dev}
     labels:
       openfaas-cloud: "1"
       role: openfaas-system
+      com.openfaas.scale.zero: false
     environment:
       read_timeout: 5m
       write_timeout: 5m
@@ -84,15 +104,21 @@ functions:
       - basic-auth-user
       - basic-auth-password
       - payload-secret
-#      - swarm-pull-secret
+  #      - swarm-pull-secret
+    limits:
+      memory: 128Mi
+    requests:
+      memory: 32Mi
+      cpu: 50m
 
   garbage-collect:
     lang: go
     handler: ./garbage-collect
-    image: functions/garbage-collect:0.4.3
+    image: ghcr.io/${REPO:-openfaas}/ofc-garbage-collect:${TAG:-dev}
     labels:
       openfaas-cloud: "1"
       role: openfaas-system
+      com.openfaas.scale.zero: false
     environment:
       write_debug: true
       read_debug: true
@@ -104,54 +130,71 @@ functions:
       - basic-auth-user
       - basic-auth-password
       - payload-secret
+    limits:
+      memory: 128Mi
+    requests:
+      memory: 32Mi
+      cpu: 50m
 
   github-status:
     lang: go
     handler: ./github-status
-    image: functions/github-status:0.3.5
+    image: ghcr.io/${REPO:-openfaas}/ofc-github-status:${TAG:-dev}
     labels:
       openfaas-cloud: "1"
       role: openfaas-system
+      com.openfaas.scale.zero: false
     environment:
-      write_debug: true
-      read_debug: true
+      write_debug: false
+      read_debug: false
       combine_output: false
       validate_hmac: true
-      debug_token: true
     environment_file:
       - gateway_config.yml
       - github.yml
     secrets:
       - private-key
       - payload-secret
+    limits:
+      memory: 128Mi
+    requests:
+      memory: 32Mi
+      cpu: 50m
 
   import-secrets:
     lang: go
     handler: ./import-secrets
-    image: functions/import-secrets:0.3.2
+    image: ghcr.io/${REPO:-openfaas}/ofc-import-secrets:${TAG:-dev}
     labels:
       openfaas-cloud: "1"
       role: openfaas-system
+      com.openfaas.scale.zero: false
     environment:
-      write_debug: true
-      read_debug: true
+      write_debug: false
+      read_debug: false
       validate_hmac: true
       combined_output: false
     environment_file:
       - github.yml
     secrets:
       - payload-secret
+    limits:
+      memory: 128Mi
+    requests:
+      memory: 32Mi
+      cpu: 50m
 
   pipeline-log:
     lang: go
     handler: ./pipeline-log
-    image: functions/pipeline-log:0.3.2
+    image: ghcr.io/${REPO:-openfaas}/ofc-pipeline-log:${TAG:-dev}
     labels:
       openfaas-cloud: "1"
       role: openfaas-system
+      com.openfaas.scale.zero: false
     environment:
-      write_debug: true
-      read_debug: true
+      write_debug: false
+      read_debug: false
       combine_output: false
     environment_file:
       - gateway_config.yml
@@ -159,14 +202,76 @@ functions:
       - s3-access-key
       - s3-secret-key
       - payload-secret
+    limits:
+      memory: 128Mi
+    requests:
+      memory: 32Mi
+      cpu: 50m
 
   list-functions:
     lang: go
     handler: ./list-functions
-    image: functions/list-functions:0.4.7
+    image: ghcr.io/${REPO:-openfaas}/ofc-list-functions:${TAG:-dev}
     labels:
       openfaas-cloud: "1"
       role: openfaas-system
+      com.openfaas.scale.zero: false
+    environment:
+      write_debug: false
+      read_debug: false
+    environment_file:
+      - gateway_config.yml
+    secrets:
+      - basic-auth-user
+      - basic-auth-password
+    limits:
+      memory: 128Mi
+    requests:
+      memory: 32Mi
+      cpu: 50m
+
+  audit-event:
+    lang: go
+    handler: ./audit-event
+    image: ghcr.io/${REPO:-openfaas}/ofc-audit-event:${TAG:-dev}
+    labels:
+      openfaas-cloud: "1"
+      role: openfaas-system
+      com.openfaas.scale.zero: false
+    environment_file:
+      - slack.yml
+    limits:
+      memory: 128Mi
+    requests:
+      memory: 32Mi
+      cpu: 50m
+
+  metrics:
+    lang: go
+    handler: ./metrics
+    image: ghcr.io/${REPO:-openfaas}/ofc-system-metrics:${TAG:-dev}
+    labels:
+      openfaas-cloud: "1"
+      role: openfaas-system
+      com.openfaas.scale.zero: false
+    environment_file:
+      - gateway_config.yml
+    environment:
+      content_type: "application/json"
+    limits:
+      memory: 128Mi
+    requests:
+      memory: 32Mi
+      cpu: 50m
+
+  function-logs:
+    lang: go
+    handler: ./function-logs
+    image: ghcr.io/${REPO:-openfaas}/ofc-function-logs:${TAG:-dev}
+    labels:
+      openfaas-cloud: "1"
+      role: openfaas-system
+      com.openfaas.scale.zero: false
     environment:
       write_debug: true
       read_debug: true
@@ -175,30 +280,24 @@ functions:
     secrets:
       - basic-auth-user
       - basic-auth-password
-
-  audit-event:
-    lang: go
-    handler: ./audit-event
-    image: functions/audit-event:0.1.1
-    labels:
-      openfaas-cloud: "1"
-    environment_file:
-      - slack.yml
+    limits:
+      memory: 128Mi
+    requests:
+      memory: 32Mi
+      cpu: 50m
 
   echo:
-    skip_build: true
-    image: functions/alpine:latest
-    fprocess: cat
+    lang: go
+    handler: ./echo
+    image: ghcr.io/${REPO:-openfaas}/ofc-echo:${TAG:-dev}
+    labels:
+      openfaas-cloud: "1"
+      com.openfaas.scale.zero: false
     environment:
       write_debug: true
       read_debug: true
-
-  system-metrics:
-    lang: go
-    handler: ./system-metrics
-    image: functions/system-metrics:0.1.0
-    environment_file:
-      - gateway_config.yml
-    environment:
-      content_type: "application/json"
-
+    limits:
+      memory: 64Mi
+    requests:
+      memory: 32Mi
+      cpu: 50m

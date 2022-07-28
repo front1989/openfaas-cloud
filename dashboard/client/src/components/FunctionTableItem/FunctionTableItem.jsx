@@ -5,19 +5,29 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faUserSecret } from "@fortawesome/free-solid-svg-icons";
 import { ReplicasProgress } from "../ReplicasProgress";
 
-const genLogPath = ({ shortName, gitOwner, gitRepo, gitSha }, user) => (
-  `${user}/${shortName}/log?repoPath=${gitOwner}/${gitRepo}&commitSHA=${gitSha}`
+const genLogPath = ({ shortName, gitOwner, gitRepo, gitSha}) => (
+  `${gitOwner}/${shortName}/function-log?repoPath=${gitOwner}/${gitRepo}&commitSHA=${gitSha}`
 );
 
-const genFnDetailPath = ({ shortName, gitOwner, gitRepo }, user) => (
-  `/${user}/${shortName}?repoPath=${gitOwner}/${gitRepo}`
+const genFnDetailPath = ({ shortName, gitOwner, gitRepo }) => (
+  `/${gitOwner}/${shortName}?repoPath=${gitOwner}/${gitRepo}`
 );
 
-const genRepoUrl = ({ gitOwner, gitRepoURL }) => (
-  `${gitRepoURL}/commits/master`
+const genRepoUrl = ({ gitRepoURL, gitBranch }) => {
+  if(gitBranch === "") {
+    return `${gitRepoURL}/commits/master`
+  }
+  return `${gitRepoURL}/commits/${gitBranch}`
+};
+
+const genOwnerInitials = (owner) => (
+  (owner.split(/[-_]+/).length > 1) ?
+    owner.split(/[-_]+/)[0].substring(0, 1).concat(owner.split(/[-_]+/)[1].substring(0, 1)) :
+      owner.split(/[-_]+/)[0].substring(0, 2)
+
 );
 
-const FunctionTableItem = ({ onClick, fn, user }) => {
+const FunctionTableItem = ({ onClick, fn }) => {
   const {
     shortName,
     gitRepo,
@@ -29,15 +39,18 @@ const FunctionTableItem = ({ onClick, fn, user }) => {
   } = fn;
 
   const repoUrl = genRepoUrl(fn);
-  const logPath = genLogPath(fn, user);
-  const fnDetailPath = genFnDetailPath(fn, user);
+  const logPath = genLogPath(fn);
+  const fnDetailPath = genFnDetailPath(fn);
 
   const handleClick = () => onClick(fnDetailPath);
 
   return (
     <tr onClick={handleClick} className="cursor-pointer">
-      <td>{shortName}</td>
       <td>
+          { fn.gitOwner}
+      </td>
+      <td>{shortName}</td>
+      <td className={"d-none d-sm-table-cell"}>
         <Button
           outline
           size="xs"
@@ -47,7 +60,7 @@ const FunctionTableItem = ({ onClick, fn, user }) => {
           <FontAwesomeIcon icon="link" />
         </Button>
       </td>
-      <td>
+      <td className={"d-none d-sm-table-cell"}>
         <div className="d-flex justify-content-between align-items-center">
           <a href={repoUrl} onClick={e => e.stopPropagation()}>
             { gitRepo }
@@ -55,16 +68,16 @@ const FunctionTableItem = ({ onClick, fn, user }) => {
           { gitPrivate && <FontAwesomeIcon icon={faUserSecret} /> }
         </div>
       </td>
-      <td>
+      <td className={"d-none d-sm-table-cell"}>
         { shortSha }
       </td>
       <td>
         { sinceDuration }
       </td>
-      <td>
+      <td className={"d-none d-sm-table-cell"}>
         { invocationCount }
       </td>
-      <td>
+      <td className={"d-none d-sm-table-cell"}>
         <ReplicasProgress fn={fn} />
       </td>
       <td>
@@ -83,5 +96,6 @@ const FunctionTableItem = ({ onClick, fn, user }) => {
 };
 
 export {
-  FunctionTableItem
+  FunctionTableItem,
+  genOwnerInitials,
 };

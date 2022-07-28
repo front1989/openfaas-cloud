@@ -2,13 +2,15 @@
 
 of-builder is an image builder for OpenFaaS images, it needs to be deployed with a container registry.
 
-The following instructions are for Docker Swarm but OpenFaaS Cloud works well on Kubernetes. [Documentation for Kubernetes](https://github.com/openfaas/openfaas-cloud/blob/master/docs/DEV.md#appendix-for-kubernetes)
-
 > Before you start deploy OpenFaaS via https://docs.openfaas.com/
 
 ## Kubernetes
 
 For Kubernetes skip this section, it is documented in the developer guide with YAML files.
+
+## Test of-builder on Kubernetes
+
+See also: [local testing of of-builder on Kubernetes](local.md)
 
 ## Installation-only (Swarm)
 
@@ -92,14 +94,16 @@ The builder service calls into the buildkit daemon to build an OpenFaaS function
 ### Build
 
 ```sh
-export OF_BUILDER_TAG=0.6.2
+export OF_BUILDER_TAG=0.8.0
+
 make build push
 ```
 
 ### Deploy
 
-```
-export OF_BUILDER_TAG=0.6.2
+```sh
+export OF_BUILDER_TAG=0.8.0
+
 docker service create \
  --network func_functions \
  --name of-builder \
@@ -124,7 +128,7 @@ rm -rf test-image && \
 mkdir -p test-image && \
 cd test-image
 
-echo '{"Ref": "registry.local:5000/foo/bar:latest"}' > config
+echo '{"Ref": "registry.local:5000/foo/bar:latest"}' > com.openfaas.docker.config
 
 mkdir -p context
 echo "## Made with buildkit" >> context/README.md
@@ -171,4 +175,3 @@ Test:
 docker rm -f dind; docker run --name dind --privileged --net=builder -d docker:dind dockerd --insecure-registry registry:5000
 docker exec -ti dind docker pull registry:5000/jmkhael/figlet:latest-99745ca9f5a1a914384686e0e928a10854cc87d5
 ```
-

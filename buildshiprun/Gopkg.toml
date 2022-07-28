@@ -1,14 +1,6 @@
 [[constraint]]
-  name = "github.com/alexellis/derek"
-  version = "0.5.0"
-
-[[constraint]]
-  name = "github.com/google/go-github"
-  version = "15.0.0"
-
-[[constraint]]
   name = "github.com/openfaas/openfaas-cloud"
-  version = "0.5.9"
+  version = "0.13.3"
 
 [prune]
   go-tests = true
@@ -17,3 +9,8 @@
 [[constraint]]
   name = "github.com/alexellis/hmac"
   version = "1.2.0"
+
+
+[[constraint]]
+  name = "github.com/openfaas/faas-cli"
+  version = "0.12.0"

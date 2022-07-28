@@ -1,13 +1,11 @@
 OpenFaaS Cloud
 ==============
 
-OpenFaaS Cloud: multi-user serverless functions managed with git
+The Multi-user OpenFaaS Platform
 
-![https://pbs.twimg.com/media/DacWCtZVMAAJQ-u.jpg](https://pbs.twimg.com/media/DacWCtZVMAAJQ-u.jpg)
+## Introduction
 
-*Announcement from Cisco's DevNet Create in Mountain View*
-
-## Description
+[![Build Status](https://github.com/openfaas/openfaas-cloud/workflows/build/badge.svg?branch=master)](https://github.com/openfaas/openfaas-cloud/actions)
 
 OpenFaaS Cloud introduces an automated build and management system for your Serverless functions with native integrations into your source-control management system whether that is GitHub or GitLab.
 
@@ -15,71 +13,75 @@ With OpenFaaS Cloud functions are managed through typing `git push` which reduce
 
 Features:
 
-* Portable - self-host or use the hosted Community Cluster (SaaS)
+* Portable - self-host on any cloud
 * Multi-user - use your GitHub/GitLab identity to log into your personal dashboard
 * Automates CI/CD triggered by `git push` (also known as GitOps)
 * Onboard new git repos with a single click by adding the *GitHub App* or a repository tag in *GitLab*
 * Immediate feedback on your personal dashboard and through GitHub Checks or GitLab Statuses
 * Sub-domain per user or organization with HTTPS
-* Fast, non-root image builds using Docker's buildkit
+* Runtime-logs for your functions
+* Fast, non-root image builds using [buildkit](https://github.com/moby/buildkit/) from Docker
 
 The dashboard page for a user:
 
-![Dashboard](https://user-images.githubusercontent.com/6358735/46193701-f56b6680-c2f6-11e8-8bf4-9256a8341960.png)
+![Dashboard](/docs/dashboard.png)
 
 The details page for a function:
 
-![Details page](https://user-images.githubusercontent.com/6358735/46193700-f56b6680-c2f6-11e8-9bec-40b61e42ce45.png)
+![Details page](/docs/details.png)
 
-### Requirements
+## Overview
 
-* OpenFaaS (0.9.10 or greater is recommended)
-* Docker Swarm or Kubernetes
+![Conceptual diagram](/docs/ofc-github-conceptual.png)
 
-> Note: other OpenFaaS providers may work, but have not been tested
+The high-level workflow for the OpenFaaS Cloud CI/CD pipeline.
 
-## Blog post
+### KubeCon video
 
-Read my [introducing OpenFaaS Cloud](https://blog.alexellis.io/introducing-openfaas-cloud/) blog post for an overview of the idea with examples, screenshots and background on the project.
+[![](http://img.youtube.com/vi/sD7hCwq3Gw0/maxresdefault.jpg)](https://www.youtube.com/watch?v=sD7hCwq3Gw0)
 
-## Conceptual architecture diagram
+[KubeCon: OpenFaaS Cloud + Linkerd: A Secure, Multi-Tenant Serverless Platform - Charles Pretzer & Alex Ellis](https://www.youtube.com/watch?v=sD7hCwq3Gw0&feature=emb_title)
 
-This conceptual diagram shows how OpenFaaS Cloud integrates with GitHub/GitLab through the use of an event-driven architecture.
+### Blog posts
 
-Main flows:
+* [Build your own OpenFaaS Cloud with AWS EKS](https://www.openfaas.com/blog/eks-openfaas-cloud-build-guide/)
+* [Introducing OpenFaaS Cloud with GitLab](https://www.openfaas.com/blog/openfaas-cloud-gitlab/)
+* [Introducing OpenFaaS Cloud](https://blog.alexellis.io/introducing-openfaas-cloud/)
+* [Sailing through the Serverless Ocean with Spotinst & OpenFaaS Cloud](https://spotinst.com/blog/sailing-through-the-serverless-ocean-with-openfaas-cloud/)
 
-1. User pushes code - GitHub/GitLab push event is sent to github-event/gitlab-event function triggering a CI/CD workflow
-2. User removes GitHub/GitLab app from one or more repos - garbage collection is invoked removing 1-many functions
-3. User accesses function via router using "pretty URL" format and request is routed to function via API Gateway
+### Documentation
 
-![](./docs/conceptual-overview.png)
+* [Conceptual architecture](https://docs.openfaas.com/openfaas-cloud/architecture).
+* [Authentication](https://docs.openfaas.com/openfaas-cloud/authentication/)
+* [Multi-stage environments](https://docs.openfaas.com/openfaas-cloud/multi-stage/)
+* [Manage secrets](https://docs.openfaas.com/openfaas-cloud/secrets/)
+* [User guide](https://docs.openfaas.com/openfaas-cloud/user-guide/)
 
-See also: [COMPONENTS.md](docs/COMPONENTS.md) for detailed information on each component.
-
-## Roadmap & Features
+### Roadmap & Features
 
 See the [Roadmap & Features](docs/ROADMAP.md)
 
 ## Get started
 
-You can set up and host your own *OpenFaaS Cloud* or contact alex@openfaas.com for instructions on how to participate in a public trial of a fully-hosted service (a.k.a. Community Cluster).
+You can set up and host your own *OpenFaaS Cloud* or pay an expert to do that for you. OpenFaaS Ltd also offers custom development, if you should have new requirements.
 
-### Option 1: Automated deployment (self-hosted)
+### Option 1: Expert installation
 
-You can set up your own OpenFaaS Cloud with authentication, wildcard certificates using the [ofc-bootstrap tool](https://github.com/openfaas-incubator/ofc-bootstrap)
+OpenFaaS Ltd provides expert installation and support for OpenFaaS Cloud. You can bring your own infrastructure, or we can install and configure OpenFaaS Cloud for your accounts on a managed cloud.
 
-This method assumes you are using Kubernetes and have a public IP available. Some basic knowledge of how to setup a GitHub App and GitHub OAuth App along with a DNS service account on Google Cloud DNS or AWS Route53.
+[Get started today](https://www.openfaas.com/support/)
 
-### Option 2: Manual deployment (self-hosted)
+### Option 2: Automated deployment (self-hosted)
 
-The manual deployment takes longer, but covers all the requirements in detail and is the most flexible option. You may follow this guide if you are contributing to the project, or if you want to use Swarm.
+You can set up your own OpenFaaS Cloud with authentication and wildcard certificates using ofc-bootstrap in around 100 seconds using the ofc-bootstrap tool.
 
-Read the [developer's guide](docs/README.md) to find out more about the functions and to start hacking on OpenFaaS Cloud.
+This method assumes that you are using Kubernetes, have a public IP available or [are using the inlets-operator](https://github.com/inlets/inlets-operator), and have a domain name. Some basic knowledge of how to setup a GitHub App and GitHub OAuth App along with a DNS service account on DigitalOcean, Google Cloud DNS, Cloudflare or AWS Route53.
 
-### Option 3: Community Cluster (SaaS)
+A [developer install is also available via this blog post](https://blog.alexellis.io/openfaas-cloud-for-development/), which disables OAuth and TLS. You will still need an IP address and domain name.
 
-There are a limited amount of spots available on the OpenFaaS Community Cluster. To apply contact alex@openfaas.com with what you plan to run on the environment. Read the privacy statement and terms and conditions for the hosted version of [OpenFaaS Cloud](./PRIVACY.md).
+Deploy with: [ofc-bootstrap](https://github.com/openfaas-incubator/ofc-bootstrap)
 
 ## Getting help
 
-For help join #openfaas-cloud on the [OpenFaaS Slack workspace](https://docs.openfaas.com/community).
+For help join #openfaas-cloud on the [OpenFaaS Slack workspace](https://docs.openfaas.com/community). If you need commercial support, contact [sales@openfaas.com](mailto:sales@openfaas.com)
+

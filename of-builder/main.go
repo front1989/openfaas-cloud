@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -26,11 +27,23 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// ConfigFileName for Docker bundle
+const ConfigFileName = "com.openfaas.docker.config"
+
+// DefaultFrontEnd to run the build with buildkit
+const DefaultFrontEnd = "tonistiigi/dockerfile:v0"
+
 var (
 	lchownEnabled bool
 	buildkitURL   string
 	buildArgs     = map[string]string{}
 )
+
+type buildConfig struct {
+	Ref       string            `json:"ref"`
+	Frontend  string            `json:"frontend,omitempty"`
+	BuildArgs map[string]string `json:"buildArgs,omitempty"`
+}
 
 func main() {
 	flag.Parse()
@@ -63,8 +76,11 @@ func main() {
 	router.HandleFunc("/build", buildHandler)
 	router.HandleFunc("/healthz", healthzHandler)
 
+	addr := "0.0.0.0:8080"
+	log.Printf("of-builder serving traffic on: %s\n", addr)
+
 	server := &http.Server{
-		Addr:    "0.0.0.0:8080",
+		Addr:    addr,
 		Handler: router,
 	}
 
@@ -126,10 +142,16 @@ func build(w http.ResponseWriter, r *http.Request, buildArgs map[string]string) 
 		return nil, bodyErr
 	}
 
-	hmacErr := validateRequest(&tarBytes, r)
+	enforceHMAC := true
+	if val, ok := os.LookupEnv("disable_hmac"); ok && val == "true" {
+		enforceHMAC = false
+	}
 
-	if hmacErr != nil {
-		return nil, hmacErr
+	if enforceHMAC {
+		hmacErr := validateRequest(&tarBytes, r)
+		if hmacErr != nil {
+			return nil, hmacErr
+		}
 	}
 
 	defer os.RemoveAll(tmpdir)
@@ -142,16 +164,12 @@ func build(w http.ResponseWriter, r *http.Request, buildArgs map[string]string) 
 		return nil, err
 	}
 
-	dt, err := ioutil.ReadFile(filepath.Join(tmpdir, "config"))
+	dt, err := ioutil.ReadFile(filepath.Join(tmpdir, ConfigFileName))
 	if err != nil {
 		return nil, err
 	}
 
-	var cfg struct {
-		Ref      string
-		Frontend string
-	}
-
+	cfg := buildConfig{}
 	if err := json.Unmarshal(dt, &cfg); err != nil {
 		return nil, err
 	}
@@ -161,7 +179,7 @@ func build(w http.ResponseWriter, r *http.Request, buildArgs map[string]string) 
 	}
 
 	if cfg.Frontend == "" {
-		cfg.Frontend = "tonistiigi/dockerfile:v0"
+		cfg.Frontend = DefaultFrontEnd
 	}
 
 	insecure := "false"
@@ -175,6 +193,10 @@ func build(w http.ResponseWriter, r *http.Request, buildArgs map[string]string) 
 
 	for k, v := range buildArgs {
 		frontendAttrs[k] = v
+	}
+
+	for k, v := range cfg.BuildArgs {
+		frontendAttrs[fmt.Sprintf("build-arg:%s", k)] = v
 	}
 
 	contextDir := filepath.Join(tmpdir, "context")
@@ -312,17 +334,4 @@ func validateRequest(req *[]byte, r *http.Request) (err error) {
 	}
 
 	return nil
-}
-
-func healthzHandler(w http.ResponseWriter, r *http.Request) {
-
-	switch r.Method {
-	case http.MethodGet:
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-		break
-
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
 }
